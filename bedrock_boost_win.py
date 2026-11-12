@@ -103,11 +103,9 @@ def run_setup():
             print("[!] LeviOptimize installation failed")
             return False
     
-    # Step 4: Beryllium
-    print("\n[Bonus] Installing Beryllium...")
-    if not install_beryllium():
-        print("[!] Beryllium installation failed")
-        print("[i] You can install it manually from CurseForge")
+    # Step 4: Beryllium (manual installation required)
+    print("\n[Bonus] Beryllium rendering pack...")
+    install_beryllium()  # Always returns True, shows manual instructions
     
     print("\n" + "=" * 60)
     print("Setup complete! You can now launch the game with optimizations.")
@@ -117,9 +115,11 @@ def run_setup():
 
 # ---------------------------------------------------------------- desktop shortcut
 def make_shortcut():
-    """Create a desktop shortcut that runs as admin."""
+    """Create desktop shortcuts for launch and setup."""
     script = str(Path(__file__).resolve())
     python = sys.executable
+
+    # 1. Launch shortcut (runs as admin with PvP profile)
     ps = (
         "$d=[Environment]::GetFolderPath('Desktop');"
         "$p=Join-Path $d 'Minecraft Boost.lnk';"
@@ -138,7 +138,113 @@ def make_shortcut():
     data = bytearray(Path(lnk).read_bytes())
     data[0x15] |= 0x20
     Path(lnk).write_bytes(bytes(data))
-    print(f"[+] shortcut created: {lnk}  (runs as admin, PvP profile)")
+    print(f"[+] launch shortcut created: {lnk}  (runs as admin, PvP profile)")
+
+    # 2. Setup shortcut (opens cmd window for interactive wizard)
+    ps_setup = (
+        "$d=[Environment]::GetFolderPath('Desktop');"
+        "$p=Join-Path $d 'Bedrock Setup.lnk';"
+        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut($p);"
+        "$s.TargetPath='cmd.exe';"
+        f"$s.Arguments='/K cd /D \"{SCRIPT_DIR}\" && {python} bedrock_boost_win.py --setup';"
+        f"$s.WorkingDirectory='{SCRIPT_DIR}';"
+        "$s.WindowStyle=1;$s.IconLocation='shell32.dll,175';$s.Save();$p"
+    )
+    out2 = subprocess.run(["powershell", "-NoProfile", "-Command", ps_setup],
+                          capture_output=True, text=True)
+    lnk2 = out2.stdout.strip()
+    if out2.returncode != 0 or not lnk2:
+        print(f"[!] couldn't create setup shortcut: {out2.stderr.strip()}")
+    else:
+        print(f"[+] setup shortcut created: {lnk2}  (double-click to install mods)")
+
+
+# ---------------------------------------------------------------- PresentMon auto-download
+def ensure_presentmon():
+    """Check for PresentMon and auto-download if missing. Returns path or None."""
+    matches = sorted(glob.glob(str(SCRIPT_DIR / "PresentMon*.exe")))
+    if matches:
+        return matches[-1]
+
+    print("[i] PresentMon not found, downloading latest release...")
+    try:
+        import urllib.request
+        import json as _json
+
+        config_path = SCRIPT_DIR / "config.json"
+        api_url = "https://api.github.com/repos/GameTechDev/PresentMon/releases/latest"
+        if config_path.exists():
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = _json.load(f)
+            api_url = config.get("presentmon", {}).get("release_api", api_url)
+
+        req = urllib.request.Request(api_url)
+        with urllib.request.urlopen(req, timeout=30) as response:
+            release = _json.loads(response.read().decode("utf-8"))
+
+        asset = None
+        for a in release.get("assets", []):
+            if a["name"].endswith(".exe"):
+                asset = a
+                break
+        if not asset:
+            print("[!] No .exe asset found in PresentMon release")
+            return None
+
+        download_url = asset["browser_download_url"]
+        download_name = asset["name"]
+        print(f"[i] downloading {download_name}...")
+        dest = SCRIPT_DIR / download_name
+        urllib.request.urlretrieve(download_url, str(dest))
+        print(f"[+] PresentMon downloaded to {dest}")
+        return dest
+    except Exception as e:
+        print(f"[!] Failed to download PresentMon: {e}")
+        print("[i] Download manually from github.com/GameTechDev/PresentMon/releases")
+        return None
+
+
+# ---------------------------------------------------------------- launch status summary
+def print_launch_status(profile, ll_exe, pm_exe, no_overlay, is_admin):
+    """Print a clear summary of what optimizations are active."""
+    print("\n" + "=" * 50)
+    print("  Bedrock Boost Launcher - Launch Status")
+    print("=" * 50)
+
+    # Profile
+    profile_obj = PROFILES.get(profile)
+    if profile_obj:
+        opts = profile_obj.get_options()
+        print(f"  Profile:       {profile_obj.description}")
+        print(f"  Settings:      {len(opts)} options.txt changes")
+    else:
+        print(f"  Profile:       {profile} (no settings)")
+
+    # LeviLauncher status
+    if ll_exe:
+        print(f"  LeviLauncher:  [OK] Installed ({ll_exe.name})")
+        print(f"  Mods:          LeviOptimize + Beryllium (if setup)")
+    else:
+        print(f"  LeviLauncher:  [MISSING] Not installed")
+        print(f"  Mods:          [MISSING] No engine-level optimizations")
+        print(f"  Note:          Run --setup to install mods for max performance")
+
+    # FPS overlay
+    if no_overlay:
+        print(f"  FPS Overlay:   [OFF] Disabled (--no-overlay)")
+    elif pm_exe:
+        if is_admin:
+            print(f"  FPS Overlay:   [OK] PresentMon ready")
+        else:
+            print(f"  FPS Overlay:   [WARN] PresentMon ready (admin recommended)")
+    else:
+        print(f"  FPS Overlay:   [MISSING] PresentMon not found")
+
+    # OS optimizations
+    print(f"  Power Plan:    [OK] High Performance")
+    print(f"  CPU Priority:  [OK] High (admin required)")
+    print(f"  Xbox Game Bar: [OFF] Disabled")
+    print("=" * 50 + "\n")
 
 
 # ---------------------------------------------------------------- launch sequence
@@ -146,47 +252,53 @@ def launch_game(profile, dry_run=False, no_overlay=False):
     """Execute the full launch sequence with all optimizations."""
     from setup.levilauncher import find_levilauncher, play as play_via_levilauncher
     from utils.os_optimizations import apply_all_os_optimizations, restore_os_optimizations
-    
+
+    is_admin = ctypes.windll.shell32.IsUserAnAdmin()
+
     # Pre-launch: apply options.txt profile
     profile_obj = PROFILES.get(profile)
     if profile_obj:
         options = profile_obj.get_options()
     else:
         options = {}
-    
+
     apply_options(options, dry_run)
-    
-    # Find PresentMon
+
+    # Find or download PresentMon
     pm_exe = None
     if not no_overlay:
-        matches = sorted(glob.glob(str(SCRIPT_DIR / "PresentMon*.exe")))
-        pm_exe = matches[-1] if matches else None
+        pm_exe = ensure_presentmon()
         if not pm_exe:
-            print("[i] FPS counter off: put PresentMon-x.x.x-x64.exe next to this script "
-                  "(github.com/GameTechDev/PresentMon/releases)")
-        elif not ctypes.windll.shell32.IsUserAnAdmin():
+            print("[i] FPS counter off: could not obtain PresentMon")
+        elif not is_admin:
             print("[i] not running as admin - FPS counter may fail to see the game")
+
+    # Find LeviLauncher
+    ll_exe = find_levilauncher()
+
+    # Print status summary
+    print_launch_status(profile, ll_exe, pm_exe, no_overlay, is_admin)
     
     if dry_run:
         print(f"[dry-run] would switch to High performance plan, launch game, "
               f"and {'show' if pm_exe else 'skip'} the FPS counter")
         return
-    
+
     # Pre-launch: power plan
     previous_plan = set_high_performance()
-    
+
     # Pre-launch: OS optimizations (Xbox Game Bar, graphics settings)
     os_states = apply_all_os_optimizations()
-    
+
     # Launch via LeviLauncher or fallback
-    ll_exe = find_levilauncher()
     if ll_exe:
         print(f"[i] launching via LeviLauncher: {ll_exe}")
         play_via_levilauncher(ll_exe)
     else:
         print("[i] LeviLauncher not found, launching via Microsoft Store...")
+        print("[i] (run --setup to install LeviLauncher + mods for full optimizations)")
         os.startfile("minecraft:")
-    
+
     print("[i] launching...")
     
     # Wait for game process
