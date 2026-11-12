@@ -88,20 +88,23 @@ def run_setup():
             print("\n[i] Setup cancelled")
             return False
     
-    # Step 2: Bedrock with LeviLamina
+    # Step 2: Bedrock with LeviLamina (requires Microsoft login)
+    bedrock_installed = False
     if ll_exe:
         print("\n[2/3] Checking Bedrock with LeviLamina...")
         print("[i] Installing latest Bedrock with LeviLamina loader...")
-        if not install_bedrock_with_loader(ll_exe):
-            print("[!] Bedrock installation failed")
-            return False
+        bedrock_installed = install_bedrock_with_loader(ll_exe)
+        if not bedrock_installed:
+            print("[i] Bedrock with LeviLamina was not installed (requires Microsoft login)")
+            print("[i] The launcher will still work with options.txt and OS optimizations")
     
-    # Step 3: LeviOptimize
-    if ll_exe:
+    # Step 3: LeviOptimize (only if Bedrock was installed)
+    if ll_exe and bedrock_installed:
         print("\n[3/3] Installing LeviOptimize...")
         if not install_levilamina_mods(ll_exe):
             print("[!] LeviOptimize installation failed")
-            return False
+            print("[i] You can try installing it later with:")
+            print(f"   {ll_exe} mod install github.com/LiteLDev/LeviOptimize#client")
     
     # Step 4: Beryllium (manual installation required)
     print("\n[Bonus] Beryllium rendering pack...")
@@ -110,6 +113,15 @@ def run_setup():
     print("\n" + "=" * 60)
     print("Setup complete! You can now launch the game with optimizations.")
     print("=" * 60)
+    
+    # Auto-create desktop shortcut after successful setup
+    print("\n[i] Creating desktop shortcut...")
+    try:
+        make_shortcut()
+    except Exception as e:
+        print(f"[!] Could not create shortcut automatically: {e}")
+        print("[i] Run --make-shortcut to create it manually")
+    
     return True
 
 
