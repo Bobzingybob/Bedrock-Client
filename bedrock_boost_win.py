@@ -69,7 +69,7 @@ def run_setup():
     print("=" * 60)
     
     # Step 1: Check client DLL
-    client_dll = SCRIPT_DIR / "client" / "build" / "BedrockBoost.dll"
+    client_dll = SCRIPT_DIR / "client" / "build" / "Release" / "BedrockBoost.dll"
     client_src = SCRIPT_DIR / "client" / "CMakeLists.txt"
     
     print("\n[1/4] Checking custom client DLL...")
@@ -100,17 +100,8 @@ def run_setup():
         print(f"[!] {reason}")
         ensure_developer_mode()
     
-    # Step 3: LeviLauncher (optional, for legacy mod support)
-    print("\n[3/4] Checking LeviLauncher (optional)...")
-    from setup.levilauncher import find_levilauncher
-    ll_exe = find_levilauncher()
-    if ll_exe:
-        print(f"[+] LeviLauncher found: {ll_exe}")
-    else:
-        print("[i] LeviLauncher not found (optional - used for legacy mod support)")
-    
-    # Step 4: PresentMon
-    print("\n[4/4] Checking PresentMon FPS counter...")
+    # Step 3: PresentMon
+    print("\n[3/3] Checking PresentMon FPS counter...")
     pm_exe = ensure_presentmon()
     if pm_exe:
         pm_name = Path(pm_exe).name if isinstance(pm_exe, (str, Path)) else pm_exe
@@ -119,7 +110,7 @@ def run_setup():
         print("[i] PresentMon not available - FPS counter will be disabled")
     
     print("\n" + "=" * 60)
-    print("Setup complete! You can now launch the game with optimizations.")
+    print("Setup complete! Launch via Microsoft Store with DLL injection.")
     print("=" * 60)
     
     # Auto-create desktop shortcut after successful setup
@@ -325,7 +316,7 @@ def ensure_presentmon():
 
 
 # ---------------------------------------------------------------- launch status summary
-def print_launch_status(profile, ll_exe, pm_exe, no_overlay, is_admin, no_inject=False):
+def print_launch_status(profile, pm_exe, no_overlay, is_admin, no_inject=False):
     """Print a clear summary of what optimizations are active."""
     print("\n" + "=" * 50)
     print("  Bedrock Boost Launcher - Launch Status")
@@ -341,7 +332,7 @@ def print_launch_status(profile, ll_exe, pm_exe, no_overlay, is_admin, no_inject
         print(f"  Profile:       {profile} (no settings)")
 
     # Client DLL status
-    client_dll = SCRIPT_DIR / "client" / "build" / "BedrockBoost.dll"
+    client_dll = SCRIPT_DIR / "client" / "build" / "Release" / "BedrockBoost.dll"
     if no_inject:
         print(f"  Client DLL:    [OFF] Skipped (--no-inject)")
     elif client_dll.exists():
@@ -351,11 +342,8 @@ def print_launch_status(profile, ll_exe, pm_exe, no_overlay, is_admin, no_inject
         print(f"  Client DLL:    [MISSING] Not built yet")
         print(f"  Note:          Build client DLL for engine-level optimizations")
 
-    # LeviLauncher status (optional now)
-    if ll_exe:
-        print(f"  LeviLauncher:  [OK] Installed (optional)")
-    else:
-        print(f"  LeviLauncher:  [SKIP] Not needed (custom client used)")
+    # Launcher
+    print(f"  Launcher:      [OK] Microsoft Store (Xbox Live)")
 
     # FPS overlay
     if no_overlay:
@@ -378,7 +366,6 @@ def print_launch_status(profile, ll_exe, pm_exe, no_overlay, is_admin, no_inject
 # ---------------------------------------------------------------- launch sequence
 def launch_game(profile, dry_run=False, no_overlay=False, no_inject=False):
     """Execute the full launch sequence with all optimizations."""
-    from setup.levilauncher import find_levilauncher, play as play_via_levilauncher
     from utils.os_optimizations import apply_all_os_optimizations, restore_os_optimizations
 
     is_admin = ctypes.windll.shell32.IsUserAnAdmin()
@@ -401,18 +388,15 @@ def launch_game(profile, dry_run=False, no_overlay=False, no_inject=False):
         elif not is_admin:
             print("[i] not running as admin - FPS counter may fail to see the game")
 
-    # Find LeviLauncher (optional fallback)
-    ll_exe = find_levilauncher()
-
     # Check client DLL
-    client_dll = SCRIPT_DIR / "client" / "build" / "BedrockBoost.dll"
+    client_dll = SCRIPT_DIR / "client" / "build" / "Release" / "BedrockBoost.dll"
     has_client = client_dll.exists()
 
     # Print status summary
-    print_launch_status(profile, ll_exe, pm_exe, no_overlay, is_admin, no_inject)
+    print_launch_status(profile, pm_exe, no_overlay, is_admin, no_inject)
     
     if dry_run:
-        print(f"[dry-run] would switch to High performance plan, launch game, "
+        print(f"[dry-run] would switch to High performance plan, launch game via Microsoft Store, "
               f"{'inject DLL' if (has_client and not no_inject) else 'skip injection'}, "
               f"and {'show' if pm_exe else 'skip'} the FPS counter")
         return
@@ -423,16 +407,11 @@ def launch_game(profile, dry_run=False, no_overlay=False, no_inject=False):
     # Pre-launch: OS optimizations (Xbox Game Bar, graphics settings)
     os_states = apply_all_os_optimizations()
 
-    # Launch game - prefer Microsoft Store for Xbox Live support
-    # LeviLauncher is optional fallback for legacy mod support
-    if ll_exe:
-        print(f"[i] launching via LeviLauncher: {ll_exe}")
-        play_via_levilauncher(ll_exe)
-    else:
-        print("[i] launching via Microsoft Store...")
-        os.startfile("minecraft:")
+    # Launch game via Microsoft Store only - preserves Xbox Live features
+    print("[i] launching via Microsoft Store...")
+    os.startfile("minecraft:")
 
-    print("[i] launching...")
+    print("[i] waiting for Minecraft.Windows.exe...")
     
     # Wait for game process
     game = wait_for_game()

@@ -233,7 +233,7 @@ def inject_client_dll(dll_path=None, timeout=90):
     
     # Default DLL path
     if dll_path is None:
-        dll_path = script_dir / "client" / "build" / "BedrockBoost.dll"
+        dll_path = script_dir / "client" / "build" / "Release" / "BedrockBoost.dll"
     else:
         dll_path = Path(dll_path)
     
