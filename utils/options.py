@@ -6,13 +6,13 @@ from pathlib import Path
 
 
 OPTIONS_GLOBS = [
-    # LeviLauncher GDK instances (highest priority — these are the moddable instances)
-    os.path.expandvars(r"%LOCALAPPDATA%\LeviLauncher\Instances\*\Minecraft Bedrock\Users\*\games\com.mojang\minecraftpe\options.txt"),
-    # Standard Bedrock (APPDATA)
-    os.path.expandvars(r"%APPDATA%\Minecraft Bedrock\Users\*\games\com.mojang\minecraftpe\options.txt"),
-    # Microsoft Store UWP
+    # Microsoft Store UWP (highest priority — this is what the launcher uses)
     os.path.expandvars(r"%LOCALAPPDATA%\Packages\Microsoft.MinecraftUWP_8wekyb3d8bbwe"
                        r"\LocalState\games\com.mojang\minecraftpe\options.txt"),
+    # Standard Bedrock (APPDATA)
+    os.path.expandvars(r"%APPDATA%\Minecraft Bedrock\Users\*\games\com.mojang\minecraftpe\options.txt"),
+    # LeviLauncher GDK instances (fallback — only if launching via LeviLauncher)
+    os.path.expandvars(r"%LOCALAPPDATA%\LeviLauncher\Instances\*\Minecraft Bedrock\Users\*\games\com.mojang\minecraftpe\options.txt"),
 ]
 
 
@@ -38,17 +38,17 @@ def find_levilauncher_instance():
 def find_options():
     """Locate the most recent options.txt file.
     
-    Prioritizes LeviLauncher GDK instances over Microsoft Store UWP,
-    since GDK instances are the moddable versions used by this launcher.
+    Prioritizes Microsoft Store UWP over LeviLauncher GDK instances,
+    since the launcher uses Microsoft Store for Xbox Live support.
     """
     found = [p for g in OPTIONS_GLOBS for p in glob.glob(g)]
     if not found:
         return None
     
-    # Prefer LeviLauncher instances over UWP
-    levi_options = [p for p in found if "LeviLauncher" in str(p)]
-    if levi_options:
-        return Path(max(levi_options, key=os.path.getmtime))
+    # Prefer Microsoft Store UWP over LeviLauncher instances
+    uwp_options = [p for p in found if "Microsoft.MinecraftUWP" in str(p)]
+    if uwp_options:
+        return Path(max(uwp_options, key=os.path.getmtime))
     
     return Path(max(found, key=os.path.getmtime))
 

@@ -10,6 +10,7 @@ Requires admin privileges for UWP-injected processes.
 import ctypes
 import ctypes.wintypes
 import os
+import struct
 import sys
 import time
 from pathlib import Path
@@ -72,11 +73,73 @@ kernel32.LoadLibraryA.restype = HANDLE
 kernel32.VirtualFreeEx.argtypes = [HANDLE, LPVOID, SIZE_T, DWORD]
 kernel32.VirtualFreeEx.restype = ctypes.c_bool
 
+# EnumProcessModules (psapi.dll)
+psapi = ctypes.WinDLL("psapi", use_last_error=True)
+psapi.EnumProcessModulesEx.argtypes = [HANDLE, ctypes.POINTER(HANDLE), DWORD, ctypes.POINTER(DWORD), DWORD]
+psapi.EnumProcessModulesEx.restype = ctypes.c_bool
+
+# GetModuleInformation (psapi.dll)
+LPMODULEINFO = ctypes.Structure
+LPMODULEINFO._fields_ = [
+    ("lpBaseOfDll", LPVOID),
+    ("SizeOfImage", DWORD),
+    ("EntryPoint", LPVOID),
+]
+psapi.GetModuleInformation.argtypes = [HANDLE, HANDLE, ctypes.POINTER(LPMODULEINFO), DWORD]
+psapi.GetModuleInformation.restype = ctypes.c_bool
+
+# GetModuleFileNameExA (psapi.dll)
+psapi.GetModuleFileNameExA.argtypes = [HANDLE, HANDLE, ctypes.c_char_p, DWORD]
+psapi.GetModuleFileNameEx.restype = DWORD
+
 MEM_COMMIT = 0x00001000
 MEM_RESERVE = 0x00002000
 MEM_RELEASE = 0x00008000
 PAGE_READWRITE = 0x04
 INFINITE = 0xFFFFFFFF
+LIST_MODULES_ALL = 0x03
+
+
+def get_kernel32_base_in_process(h_process):
+    """Find the base address of kernel32.dll in the target process.
+    
+    UWP processes load kernel32.dll at a different address than the
+    injector's process, so we can't use GetModuleHandleA from our process.
+    Instead, we enumerate the target process's loaded modules.
+    
+    Args:
+        h_process: Handle to the target process
+        
+    Returns:
+        Base address of kernel32.dll in the target process, or 0 if not found
+    """
+    # Enumerate all modules in the target process
+    module_handles = (HANDLE * 1024)()
+    needed = DWORD()
+    
+    if not psapi.EnumProcessModulesEx(
+        h_process,
+        module_handles,
+        DWORD(1024 * ctypes.sizeof(HANDLE)),
+        ctypes.byref(needed),
+        LIST_MODULES_ALL
+    ):
+        return 0
+    
+    module_count = needed.value // ctypes.sizeof(HANDLE)
+    
+    # Find kernel32.dll by checking module names
+    for i in range(module_count):
+        h_module = module_handles[i]
+        name_buf = ctypes.create_string_buffer(260)
+        
+        if psapi.GetModuleFileNameExA(h_process, h_module, name_buf, 260) > 0:
+            name = name_buf.value.decode('utf-8', errors='replace').lower()
+            if 'kernel32.dll' in name or 'kernel32' in name:
+                # Found kernel32.dll, return its base address (the module handle IS the base)
+                return h_module
+    
+    return 0
 
 
 def find_minecraft_process():
@@ -149,13 +212,30 @@ def inject_dll(pid, dll_path):
                 print("[!] Access denied - try running as administrator")
             return False
         
-        # Get LoadLibraryA address
-        h_kernel32 = kernel32.GetModuleHandleA(b"kernel32.dll")
-        load_lib_addr = kernel32.GetProcAddress(h_kernel32, b"LoadLibraryA")
-        if not load_lib_addr:
-            print("[!] Failed to get LoadLibraryA address")
+        # Get LoadLibraryA address in the TARGET process
+        # For UWP apps, kernel32.dll is loaded at a different address than in our process,
+        # so we must find it by enumerating the target's loaded modules
+        h_kernel32_remote = get_kernel32_base_in_process(h_process)
+        if not h_kernel32_remote:
+            print("[!] Failed to find kernel32.dll in target process")
             kernel32.CloseHandle(h_process)
             return False
+        
+        # Get LoadLibraryA offset from our own kernel32.dll (offsets are the same)
+        h_kernel32_local = kernel32.GetModuleHandleA(b"kernel32.dll")
+        load_lib_local = kernel32.GetProcAddress(h_kernel32_local, b"LoadLibraryA")
+        if not load_lib_local:
+            print("[!] Failed to get LoadLibraryA address from local kernel32")
+            kernel32.CloseHandle(h_process)
+            return False
+        
+        # Calculate the offset of LoadLibraryA within kernel32.dll
+        load_lib_offset = load_lib_local - h_kernel32_local
+        # Apply the same offset to the remote kernel32 base
+        load_lib_addr = h_kernel32_remote + load_lib_offset
+        
+        print(f"[i] kernel32.dll base in target: 0x{h_kernel32_remote:X}")
+        print(f"[i] LoadLibraryA address in target: 0x{load_lib_addr:X}")
         
         # Allocate memory in the target process
         dll_bytes = dll_path.encode('ascii') + b'\x00'
