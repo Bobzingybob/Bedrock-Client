@@ -2,17 +2,18 @@
 """
 bedrock_boost_win.py - Bedrock Boost Launcher
 
-Comprehensive Bedrock optimization launcher that wraps LeviLauncher and automates
-the installation and management of performance mods (LeviOptimize, Beryllium) while
-applying Competitive PvP-optimized settings.
+Comprehensive Bedrock optimization launcher that injects a custom performance DLL
+into Minecraft.Windows.exe and applies OS-level optimizations (power plan, CPU
+priority, options.txt) while showing a real-time FPS counter.
 
-Does NOT touch game memory or modify the client. It only:
-  1. edits options.txt with performance profiles (with backup)
-  2. switches Windows to the High performance power plan while you play
-  3. launches via LeviLauncher (or fallback to Microsoft Store)
-  4. raises the game's CPU priority
-  5. shows a click-through FPS counter (PresentMon)
-  6. restores your power plan when the game closes
+Optimizations applied:
+  1. Injects custom BedrockBoost.dll with engine-level performance modules
+  2. Edits options.txt with performance profiles (with backup)
+  3. Switches Windows to the High performance power plan while you play
+  4. Launches via Microsoft Store (or LeviLauncher fallback)
+  5. Raises the game's CPU priority
+  6. Shows a click-through FPS counter (PresentMon)
+  7. Restores your power plan when the game closes
 
 Setup:
   pip install psutil
@@ -22,6 +23,7 @@ Setup:
 
 Usage (run from an ADMIN terminal for the FPS counter + priority boost):
   python bedrock_boost_win.py [--profile pvp] [--no-overlay] [--dry-run]
+  python bedrock_boost_win.py [--no-inject]        # skip DLL injection
   python bedrock_boost_win.py --setup              # run first-time setup wizard
   python bedrock_boost_win.py --make-shortcut      # desktop shortcut, runs as admin
 """
@@ -49,6 +51,7 @@ from utils.options import find_options, apply_options
 from utils.power import set_high_performance, restore_power_plan
 from utils.priority import game_running, wait_for_game, set_high_priority
 from utils.fps import FrameMonitor, run_overlay
+from utils.injector import inject_client_dll, check_injection_ready, ensure_developer_mode
 from profiles.pvp import PvPProfile
 
 
@@ -61,54 +64,58 @@ PROFILES = {
 # ---------------------------------------------------------------- setup wizard
 def run_setup():
     """Run the first-time setup wizard."""
-    from setup.levilauncher import find_levilauncher, install_levilauncher, install_bedrock_with_loader
-    from setup.levilamina import install_all as install_levilamina_mods
-    from setup.beryllium import install_all as install_beryllium
-    
     print("=" * 60)
     print("Bedrock Boost Launcher - First-Time Setup")
     print("=" * 60)
     
-    # Step 1: LeviLauncher
-    print("\n[1/3] Checking LeviLauncher...")
+    # Step 1: Check client DLL
+    client_dll = SCRIPT_DIR / "client" / "build" / "BedrockBoost.dll"
+    client_src = SCRIPT_DIR / "client" / "CMakeLists.txt"
+    
+    print("\n[1/4] Checking custom client DLL...")
+    if client_dll.exists():
+        print(f"[+] Client DLL found: {client_dll}")
+    elif client_src.exists():
+        print("[i] Client source found but DLL not built.")
+        print("[i] You need MSVC + CMake to build the client DLL.")
+        print("[i] Would you like to try building now? (y/n)")
+        try:
+            if input().strip().lower() == 'y':
+                _build_client_dll()
+                if client_dll.exists():
+                    print(f"[+] Client DLL built successfully: {client_dll}")
+                else:
+                    print("[!] Client DLL build failed")
+        except (EOFError, KeyboardInterrupt):
+            print("\n[i] Build skipped")
+    else:
+        print("[i] No client source found. The launcher will work with OS-level optimizations only.")
+    
+    # Step 2: Check injection prerequisites
+    print("\n[2/4] Checking injection prerequisites...")
+    ready, reason = check_injection_ready()
+    if ready:
+        print("[+] Injection ready: Admin + Developer Mode")
+    else:
+        print(f"[!] {reason}")
+        ensure_developer_mode()
+    
+    # Step 3: LeviLauncher (optional, for legacy mod support)
+    print("\n[3/4] Checking LeviLauncher (optional)...")
+    from setup.levilauncher import find_levilauncher
     ll_exe = find_levilauncher()
     if ll_exe:
         print(f"[+] LeviLauncher found: {ll_exe}")
     else:
-        print("[i] LeviLauncher not found. Would you like to install it? (y/n)")
-        try:
-            if input().strip().lower() == 'y':
-                ll_exe = install_levilauncher()
-                if not ll_exe:
-                    print("[!] LeviLauncher installation failed")
-                    return False
-            else:
-                print("[i] Skipping LeviLauncher installation")
-        except (EOFError, KeyboardInterrupt):
-            print("\n[i] Setup cancelled")
-            return False
+        print("[i] LeviLauncher not found (optional - used for legacy mod support)")
     
-    # Step 2: Bedrock with LeviLamina (requires Microsoft login)
-    bedrock_installed = False
-    if ll_exe:
-        print("\n[2/3] Checking Bedrock with LeviLamina...")
-        print("[i] Installing latest Bedrock with LeviLamina loader...")
-        bedrock_installed = install_bedrock_with_loader(ll_exe)
-        if not bedrock_installed:
-            print("[i] Bedrock with LeviLamina was not installed (requires Microsoft login)")
-            print("[i] The launcher will still work with options.txt and OS optimizations")
-    
-    # Step 3: LeviOptimize (only if Bedrock was installed)
-    if ll_exe and bedrock_installed:
-        print("\n[3/3] Installing LeviOptimize...")
-        if not install_levilamina_mods(ll_exe):
-            print("[!] LeviOptimize installation failed")
-            print("[i] You can try installing it later with:")
-            print(f"   {ll_exe} mod install github.com/LiteLDev/LeviOptimize#client")
-    
-    # Step 4: Beryllium (manual installation required)
-    print("\n[Bonus] Beryllium rendering pack...")
-    install_beryllium()  # Always returns True, shows manual instructions
+    # Step 4: PresentMon
+    print("\n[4/4] Checking PresentMon FPS counter...")
+    pm_exe = ensure_presentmon()
+    if pm_exe:
+        print(f"[+] PresentMon ready: {pm_exe.name}")
+    else:
+        print("[i] PresentMon not available - FPS counter will be disabled")
     
     print("\n" + "=" * 60)
     print("Setup complete! You can now launch the game with optimizations.")
@@ -123,6 +130,36 @@ def run_setup():
         print("[i] Run --make-shortcut to create it manually")
     
     return True
+
+
+def _build_client_dll():
+    """Attempt to build the client DLL using CMake."""
+    build_dir = SCRIPT_DIR / "client" / "build"
+    cmake_dir = SCRIPT_DIR / "client"
+    
+    print("[i] Configuring CMake...")
+    result = subprocess.run(
+        ["cmake", "-B", str(build_dir), "-S", str(cmake_dir), "-DCMAKE_BUILD_TYPE=Release"],
+        capture_output=True, text=True, cwd=str(cmake_dir)
+    )
+    if result.returncode != 0:
+        print(f"[!] CMake configure failed: {result.stderr.strip()}")
+        return
+    
+    print("[i] Building DLL...")
+    result = subprocess.run(
+        ["cmake", "--build", str(build_dir), "--config", "Release"],
+        capture_output=True, text=True, cwd=str(cmake_dir)
+    )
+    if result.returncode != 0:
+        print(f"[!] Build failed: {result.stderr.strip()}")
+        return
+    
+    # Copy DLL to build directory if needed
+    dll_in_intermediate = build_dir / "Release" / "BedrockBoost.dll"
+    if dll_in_intermediate.exists() and not (build_dir / "BedrockBoost.dll").exists():
+        import shutil
+        shutil.copy2(str(dll_in_intermediate), str(build_dir / "BedrockBoost.dll"))
 
 
 # ---------------------------------------------------------------- desktop shortcut
@@ -217,7 +254,7 @@ def ensure_presentmon():
 
 
 # ---------------------------------------------------------------- launch status summary
-def print_launch_status(profile, ll_exe, pm_exe, no_overlay, is_admin):
+def print_launch_status(profile, ll_exe, pm_exe, no_overlay, is_admin, no_inject=False):
     """Print a clear summary of what optimizations are active."""
     print("\n" + "=" * 50)
     print("  Bedrock Boost Launcher - Launch Status")
@@ -232,14 +269,22 @@ def print_launch_status(profile, ll_exe, pm_exe, no_overlay, is_admin):
     else:
         print(f"  Profile:       {profile} (no settings)")
 
-    # LeviLauncher status
-    if ll_exe:
-        print(f"  LeviLauncher:  [OK] Installed ({ll_exe.name})")
-        print(f"  Mods:          LeviOptimize + Beryllium (if setup)")
+    # Client DLL status
+    client_dll = SCRIPT_DIR / "client" / "build" / "BedrockBoost.dll"
+    if no_inject:
+        print(f"  Client DLL:    [OFF] Skipped (--no-inject)")
+    elif client_dll.exists():
+        print(f"  Client DLL:    [OK] BedrockBoost.dll ready")
+        print(f"  Modules:       EntityCulling, ChunkOpt, FPSBoost, TickOpt")
     else:
-        print(f"  LeviLauncher:  [MISSING] Not installed")
-        print(f"  Mods:          [MISSING] No engine-level optimizations")
-        print(f"  Note:          Run --setup to install mods for max performance")
+        print(f"  Client DLL:    [MISSING] Not built yet")
+        print(f"  Note:          Build client DLL for engine-level optimizations")
+
+    # LeviLauncher status (optional now)
+    if ll_exe:
+        print(f"  LeviLauncher:  [OK] Installed (optional)")
+    else:
+        print(f"  LeviLauncher:  [SKIP] Not needed (custom client used)")
 
     # FPS overlay
     if no_overlay:
@@ -260,7 +305,7 @@ def print_launch_status(profile, ll_exe, pm_exe, no_overlay, is_admin):
 
 
 # ---------------------------------------------------------------- launch sequence
-def launch_game(profile, dry_run=False, no_overlay=False):
+def launch_game(profile, dry_run=False, no_overlay=False, no_inject=False):
     """Execute the full launch sequence with all optimizations."""
     from setup.levilauncher import find_levilauncher, play as play_via_levilauncher
     from utils.os_optimizations import apply_all_os_optimizations, restore_os_optimizations
@@ -285,14 +330,19 @@ def launch_game(profile, dry_run=False, no_overlay=False):
         elif not is_admin:
             print("[i] not running as admin - FPS counter may fail to see the game")
 
-    # Find LeviLauncher
+    # Find LeviLauncher (optional fallback)
     ll_exe = find_levilauncher()
 
+    # Check client DLL
+    client_dll = SCRIPT_DIR / "client" / "build" / "BedrockBoost.dll"
+    has_client = client_dll.exists()
+
     # Print status summary
-    print_launch_status(profile, ll_exe, pm_exe, no_overlay, is_admin)
+    print_launch_status(profile, ll_exe, pm_exe, no_overlay, is_admin, no_inject)
     
     if dry_run:
         print(f"[dry-run] would switch to High performance plan, launch game, "
+              f"{'inject DLL' if (has_client and not no_inject) else 'skip injection'}, "
               f"and {'show' if pm_exe else 'skip'} the FPS counter")
         return
 
@@ -302,13 +352,13 @@ def launch_game(profile, dry_run=False, no_overlay=False):
     # Pre-launch: OS optimizations (Xbox Game Bar, graphics settings)
     os_states = apply_all_os_optimizations()
 
-    # Launch via LeviLauncher or fallback
+    # Launch game - prefer Microsoft Store for Xbox Live support
+    # LeviLauncher is optional fallback for legacy mod support
     if ll_exe:
         print(f"[i] launching via LeviLauncher: {ll_exe}")
         play_via_levilauncher(ll_exe)
     else:
-        print("[i] LeviLauncher not found, launching via Microsoft Store...")
-        print("[i] (run --setup to install LeviLauncher + mods for full optimizations)")
+        print("[i] launching via Microsoft Store...")
         os.startfile("minecraft:")
 
     print("[i] launching...")
@@ -318,6 +368,18 @@ def launch_game(profile, dry_run=False, no_overlay=False):
     if not game:
         print("[!] game process not found within 90s")
         return
+    
+    # Post-launch: DLL injection (if enabled and DLL exists)
+    if not no_inject and has_client:
+        print("\n[i] Injecting custom client DLL...")
+        inject_success = inject_client_dll(str(client_dll.resolve()))
+        if not inject_success:
+            print("[!] Injection failed - game will run without custom client")
+            print("[i] Make sure you're running as administrator")
+    elif not no_inject and not has_client:
+        print("\n[i] Skipping DLL injection - client DLL not built")
+    else:
+        print("\n[i] Skipping DLL injection (--no-inject flag)")
     
     # Post-launch: CPU priority
     set_high_priority(game)
@@ -351,7 +413,7 @@ def launch_game(profile, dry_run=False, no_overlay=False):
 # ---------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser(
-        description="Bedrock Boost Launcher - Competitive PvP optimization"
+        description="Bedrock Boost Launcher - Custom client + OS optimizations"
     )
     ap.add_argument("--profile", choices=list(PROFILES.keys()), default="pvp",
                     help="Optimization profile to apply (default: pvp)")
@@ -359,6 +421,8 @@ def main():
                     help="Show what would be done without making changes")
     ap.add_argument("--no-overlay", action="store_true",
                     help="Disable FPS overlay")
+    ap.add_argument("--no-inject", action="store_true",
+                    help="Skip custom client DLL injection")
     ap.add_argument("--make-shortcut", action="store_true",
                     help="Create desktop shortcut (runs as admin)")
     ap.add_argument("--setup", action="store_true",
@@ -379,7 +443,7 @@ def main():
         sys.exit("[!] Minecraft is already running - close it first, "
                  "or it will overwrite options.txt when it exits.")
     
-    launch_game(args.profile, args.dry_run, args.no_overlay)
+    launch_game(args.profile, args.dry_run, args.no_overlay, args.no_inject)
 
 
 if __name__ == "__main__":
