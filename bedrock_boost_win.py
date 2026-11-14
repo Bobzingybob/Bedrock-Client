@@ -113,7 +113,8 @@ def run_setup():
     print("\n[4/4] Checking PresentMon FPS counter...")
     pm_exe = ensure_presentmon()
     if pm_exe:
-        print(f"[+] PresentMon ready: {pm_exe.name}")
+        pm_name = Path(pm_exe).name if isinstance(pm_exe, (str, Path)) else pm_exe
+        print(f"[+] PresentMon ready: {pm_name}")
     else:
         print("[i] PresentMon not available - FPS counter will be disabled")
     
@@ -132,18 +133,73 @@ def run_setup():
     return True
 
 
+def _find_vs_generator():
+    """Detect the Visual Studio generator for CMake."""
+    vswhere = r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+    if not Path(vswhere).exists():
+        return None
+    # Find latest BuildTools or VS installation with C++ workload
+    for workload in ["Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "Microsoft.Component.MSBuild"]:
+        result = subprocess.run(
+            [vswhere, "-latest", "-requires", workload, "-property", "installationPath"],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            install_path = result.stdout.strip()
+            # Determine version from path
+            if "2022" in install_path:
+                return "Visual Studio 17 2022", install_path
+            elif "2019" in install_path:
+                return "Visual Studio 16 2019", install_path
+    return None
+
+
 def _build_client_dll():
     """Attempt to build the client DLL using CMake."""
     build_dir = SCRIPT_DIR / "client" / "build"
     cmake_dir = SCRIPT_DIR / "client"
     
+    # Detect Visual Studio generator
+    vs_info = _find_vs_generator()
+    if vs_info:
+        generator, _ = vs_info
+        print(f"[i] Detected Visual Studio: {generator}")
+        cmake_configure = [
+            "cmake", "-B", str(build_dir), "-S", str(cmake_dir),
+            "-G", generator,
+            "-DCMAKE_BUILD_TYPE=Release"
+        ]
+    else:
+        print("[i] Visual Studio not detected, using default CMake generator...")
+        cmake_configure = [
+            "cmake", "-B", str(build_dir), "-S", str(cmake_dir),
+            "-DCMAKE_BUILD_TYPE=Release"
+        ]
+    
     print("[i] Configuring CMake...")
     result = subprocess.run(
-        ["cmake", "-B", str(build_dir), "-S", str(cmake_dir), "-DCMAKE_BUILD_TYPE=Release"],
+        cmake_configure,
         capture_output=True, text=True, cwd=str(cmake_dir)
     )
     if result.returncode != 0:
-        print(f"[!] CMake configure failed: {result.stderr.strip()}")
+        stderr = result.stderr.strip()
+        stdout = result.stdout.strip()
+        combined = stdout + "\n" + stderr if stdout else stderr
+        print(f"[!] CMake configure failed:")
+        # Print first few lines of error
+        for line in combined.split('\n')[:10]:
+            print(f"    {line}")
+        
+        # Check for common MSVC issues
+        if "CMAKE_C_COMPILER not set" in combined or "nmake" in combined.lower():
+            print("\n[!] MSVC C++ compiler workload is not installed.")
+            print("[i] You have Visual Studio Build Tools, but the C++ workload is missing.")
+            print("[i] To fix this:")
+            print("[i] 1. Open 'Visual Studio Installer' from Start Menu")
+            print("[i] 2. Click 'Modify' on Visual Studio Build Tools")
+            print("[i] 3. Check 'Desktop development with C++' workload")
+            print("[i] 4. Click 'Modify' to install")
+            print("[i] 5. Restart this setup after installation")
         return
     
     print("[i] Building DLL...")
@@ -152,14 +208,29 @@ def _build_client_dll():
         capture_output=True, text=True, cwd=str(cmake_dir)
     )
     if result.returncode != 0:
-        print(f"[!] Build failed: {result.stderr.strip()}")
+        stderr = result.stderr.strip()
+        stdout = result.stdout.strip()
+        combined = stdout + "\n" + stderr if stdout else stderr
+        print(f"[!] Build failed:")
+        for line in combined.split('\n')[-15:]:
+            print(f"    {line}")
         return
     
     # Copy DLL to build directory if needed
-    dll_in_intermediate = build_dir / "Release" / "BedrockBoost.dll"
-    if dll_in_intermediate.exists() and not (build_dir / "BedrockBoost.dll").exists():
-        import shutil
-        shutil.copy2(str(dll_in_intermediate), str(build_dir / "BedrockBoost.dll"))
+    dll_found = False
+    for sub_dir in ["", "Release", str(build_dir / "x64" / "Release")]:
+        dll_path = build_dir / sub_dir / "BedrockBoost.dll" if sub_dir else build_dir / "BedrockBoost.dll"
+        if dll_path.exists():
+            if not (build_dir / "BedrockBoost.dll").exists():
+                import shutil
+                shutil.copy2(str(dll_path), str(build_dir / "BedrockBoost.dll"))
+            dll_found = True
+            break
+    
+    if dll_found:
+        print(f"[+] Client DLL built successfully: {build_dir / 'BedrockBoost.dll'}")
+    else:
+        print("[!] Build completed but DLL not found in expected locations")
 
 
 # ---------------------------------------------------------------- desktop shortcut
