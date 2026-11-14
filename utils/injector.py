@@ -90,7 +90,7 @@ psapi.GetModuleInformation.restype = ctypes.c_bool
 
 # GetModuleFileNameExA (psapi.dll)
 psapi.GetModuleFileNameExA.argtypes = [HANDLE, HANDLE, ctypes.c_char_p, DWORD]
-psapi.GetModuleFileNameEx.restype = DWORD
+psapi.GetModuleFileNameExA.restype = DWORD
 
 MEM_COMMIT = 0x00001000
 MEM_RESERVE = 0x00002000
@@ -131,13 +131,22 @@ def get_kernel32_base_in_process(h_process):
     # Find kernel32.dll by checking module names
     for i in range(module_count):
         h_module = module_handles[i]
+        if not h_module:
+            continue
+            
+        # Get the actual base address using GetModuleInformation
+        mod_info = LPMODULEINFO()
+        if not psapi.GetModuleInformation(h_process, h_module, ctypes.byref(mod_info), ctypes.sizeof(mod_info)):
+            continue
+        
+        # Get the module name to identify kernel32.dll
         name_buf = ctypes.create_string_buffer(260)
         
         if psapi.GetModuleFileNameExA(h_process, h_module, name_buf, 260) > 0:
             name = name_buf.value.decode('utf-8', errors='replace').lower()
             if 'kernel32.dll' in name or 'kernel32' in name:
-                # Found kernel32.dll, return its base address (the module handle IS the base)
-                return h_module
+                # Return the actual base address from GetModuleInformation
+                return mod_info.lpBaseOfDll
     
     return 0
 
