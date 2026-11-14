@@ -1,0 +1,69 @@
+{
+    "launcher": {
+        "name": "Bedrock Boost Launcher",
+        "version": "1.0.0"
+    },
+    "client": {
+        "dll_path": "client/build/Release/BedrockBoost.dll",
+        "auto_inject": true,
+        "modules": {
+            "EntityCulling": {
+                "enabled": true,
+                "cullDistance": 64.0,
+                "cullStepSize": 0.5,
+                "cullTileEntities": true,
+                "cullItems": true,
+                "cullMobs": true,
+                "cullAnimals": true
+            },
+            "ChunkOptimization": {
+                "enabled": true,
+                "maxChunksPerTick": 4,
+                "updateInterval": 50.0,
+                "prioritizeNearChunks": true,
+                "nearChunkRadius": 4
+            },
+            "FPSBoost": {
+                "enabled": true,
+                "unlockFPS": true,
+                "maxFPS": 300,
+                "disableShadows": true,
+                "disableParticles": true,
+                "disableAnimations": true,
+                "disableWeather": true,
+                "disableClouds": true
+            },
+            "TickOptimization": {
+                "enabled": true,
+                "throttleEntityAI": true,
+                "aiThrottleInterval": 3,
+                "reducePhysicsUpdates": true,
+                "optimizeInventory": true
+            }
+        }
+    },
+    "levilauncher": {
+        "github_repo": "LiteLDev/LeviLauncher",
+        "release_api": "https://api.github.com/repos/LiteLDev/LeviLauncher/releases/latest",
+        "install_dir": "LeviLauncher"
+    },
+    "beryllium": {
+        "curseforge_id": "984562",
+        "download_url": null
+    },
+    "levoptimize": {
+        "github_repo": "LiteLDev/LeviOptimize",
+        "client_branch": "client"
+    },
+    "presentmon": {
+        "github_repo": "GameTechDev/PresentMon",
+        "release_api": "https://api.github.com/repos/GameTechDev/PresentMon/releases/latest"
+    },
+    "defaults": {
+        "profile": "pvp",
+        "overlay": true,
+        "power_plan": true,
+        "cpu_priority": true,
+        "inject_client": true
+    }
+}
