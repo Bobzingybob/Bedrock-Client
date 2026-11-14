@@ -79,12 +79,12 @@ psapi.EnumProcessModulesEx.argtypes = [HANDLE, ctypes.POINTER(HANDLE), DWORD, ct
 psapi.EnumProcessModulesEx.restype = ctypes.c_bool
 
 # GetModuleInformation (psapi.dll)
-LPMODULEINFO = ctypes.Structure
-LPMODULEINFO._fields_ = [
-    ("lpBaseOfDll", LPVOID),
-    ("SizeOfImage", DWORD),
-    ("EntryPoint", LPVOID),
-]
+class LPMODULEINFO(ctypes.Structure):
+    _fields_ = [
+        ("lpBaseOfDll", LPVOID),
+        ("SizeOfImage", DWORD),
+        ("EntryPoint", LPVOID),
+    ]
 psapi.GetModuleInformation.argtypes = [HANDLE, HANDLE, ctypes.POINTER(LPMODULEINFO), DWORD]
 psapi.GetModuleInformation.restype = ctypes.c_bool
 
