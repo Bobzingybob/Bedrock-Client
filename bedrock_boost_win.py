@@ -34,6 +34,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -434,8 +435,33 @@ def launch_game(profile, dry_run=False, no_overlay=False, no_inject=False):
     # Post-launch: CPU priority
     set_high_priority(game)
     
-    # FPS overlay
+    # FPS overlay and game monitoring
     monitor = None
+    game_closed_event = threading.Event()
+
+    def watch_game():
+        """Watch for game process to exit and trigger cleanup."""
+        while game.is_running():
+            if game_closed_event.wait(timeout=1):
+                return
+        # Game has exited
+        print("\n[i] Minecraft has closed, cleaning up...")
+        if monitor and monitor.proc.poll() is None:
+            # PresentMon didn't auto-terminate (UWP sandbox), kill it manually
+            monitor.stop()
+        if previous_plan:
+            restore_power_plan(previous_plan)
+        restore_os_optimizations(os_states)
+        # Signal the overlay to close
+        if hasattr(run_overlay, '_root') and run_overlay._root is not None:
+            try:
+                run_overlay._root.after(0, run_overlay._root.destroy)
+            except Exception:
+                pass
+
+    watcher = threading.Thread(target=watch_game, daemon=True)
+    watcher.start()
+
     try:
         if pm_exe:
             monitor = FrameMonitor(pm_exe)
@@ -450,14 +476,18 @@ def launch_game(profile, dry_run=False, no_overlay=False, no_inject=False):
                     run_overlay(game, monitor)
                 except Exception as e:
                     print(f"[i] overlay error: {e}")
-        game.wait()
+        # Wait for the game to close (watcher thread handles cleanup)
+        while game.is_running():
+            time.sleep(0.5)
     finally:
-        # Cleanup
-        if monitor:
+        # Final cleanup — watcher thread should have handled most of this
+        if monitor and monitor.proc.poll() is None:
             monitor.stop()
         if previous_plan:
             restore_power_plan(previous_plan)
         restore_os_optimizations(os_states)
+        print("[+] power plan restored")
+        print("[+] Xbox Game Bar re-enabled")
 
 
 # ---------------------------------------------------------------- main

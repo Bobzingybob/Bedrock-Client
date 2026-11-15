@@ -83,6 +83,7 @@ def run_overlay(game, monitor):
     """Transparent, click-through, always-on-top FPS overlay in the top-left corner."""
     import tkinter as tk
     root = tk.Tk()
+    run_overlay._root = root  # Store reference so watcher thread can destroy it
     root.overrideredirect(True)
     root.attributes("-topmost", True)
     key = "#010101"
@@ -104,7 +105,11 @@ def run_overlay(game, monitor):
     dumped = [False]
 
     def tick():
-        if not game.is_running():
+        try:
+            if not game.is_running():
+                root.destroy()
+                return
+        except Exception:
             root.destroy()
             return
         s = monitor.stats() if monitor else None
@@ -124,3 +129,4 @@ def run_overlay(game, monitor):
 
     tick()
     root.mainloop()
+    run_overlay._root = None  # Clear reference when done
